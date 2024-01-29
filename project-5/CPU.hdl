@@ -1,0 +1,101 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+/**
+ * The Hack Central Processing unit (CPU).
+ * Parses the binary code in the instruction input and executes it according to the
+ * Hack machine language specification. In the case of a C-instruction, computes the
+ * function specified by the instruction. If the instruction specifies to read a memory
+ * value, the inM input is expected to contain this value. If the instruction specifies
+ * to write a value to the memory, sets the outM output to this value, sets the addressM
+ * output to the target address, and asserts the writeM output (when writeM == 0, any
+ * value may appear in outM).
+ * If the reset input is 0, computes the address of the next instruction and sets the
+ * pc output to that value. If the reset input is 1, sets pc to 0.
+ * Note: The outM and writeM outputs are combinational: they are affected by the
+ * instruction's execution during the current cycle. The addressM and pc outputs are
+ * clocked: although they are affected by the instruction's execution, they commit to
+ * their new values only in the next cycle.
+ */
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to restart the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // Address of next instruction
+
+
+    // solution:
+    // for A-instruction:
+    //                    - load of A-register should always be 1  --->  use OR NOT(instruction[15])
+    //                    - load of D-register, writeM, load of PC should always be 0  --->  use AND instruction[15]
+
+    // if jjj=000 don't jump (load=0), if jjj=111 jump (load=1). Else use ng,zr from ALU output to evaluate the 6 conditionals
+    // this jump logic can be achieved with 3 clauses from truth table function:  ng,zr,j1,j2,j3 --> load
+    // ng,zr,j1=1,0,1 then load=1
+    // ng,zr,j2=0,1,1 then load=1
+    // ng,zr,j3=0,0,1 then load=1
+
+    PARTS:
+    // Instruction Mux
+    Not (in=instruction[15], out=selAC);                           // A-instruc means sel=0
+    Mux16 (a=outALU, b=instruction, sel=selAC, out=instrucAC);
+
+
+    // A-register
+    Or  (a=instruction[5], b=selAC, out=loadA);                    // A-instruc: d1 OR NOT(0) = 1,  C-instruc: d1 OR NOT(1) = d1
+    ARegister (in=instrucAC, load=loadA, out=registerA, out[0..14]=addressM);
+
+    // D-register
+    And (a=instruction[4], b=instruction[15], out=loadD);          // A-instruc: d2 AND 0 = 0,  C-instruc: d2 AND 1 = d2
+    DRegister (in=outALU, load=loadD, out=registerD);
+
+    // writeM
+    And (a=instruction[3], b=instruction[15], out=writeM);         // A-instruc: d3 AND 0 = 0,  C-instruc: d3 AND 1 = d3
+
+
+    // A/M Mux - same for A/C instruc
+    Mux16 (a=registerA, b=inM, sel=instruction[12], out=inputAM);
+
+    // ALU - same for A/C instruc
+    ALU  (x=registerD, y=inputAM, zx=instruction[11], nx=instruction[10], zy=instruction[9], ny=instruction[8], f=instruction[7], no=instruction[6], out=outALU, out=outM, zr=zrALU, ng=ngALU);
+
+
+    // jump logic
+    // (zg AND NOT(zr) AND j1)  OR  (NOT(ng) AND zr AND j2)  OR  (NOT(ng) AND NOT(zr) AND j3)
+    // I have 3 clauses:
+    //                    1. when zg AND NOT(zr)=1, I jump if j1=1
+    //                    2. when NOT(ng) AND zr=1, I jump if j2=1
+    //                    3. when NOT(ng) AND NOT(zr)=1, I jump if j3=1
+
+    Not (in=ngALU, out=notng);
+    Not (in=zrALU, out=notzr);
+
+    // clause 1
+    And (a=ngALU, b=notzr, out=ngNotzr);
+    And (a=ngNotzr, b=instruction[2], out=neg);
+
+    // clause 2
+    And (a=zrALU, b=notng, out=zrNotng);
+    And (a=zrNotng, b=instruction[1], out=zero);
+
+    // clause 3
+    And (a=notng, b=notzr, out=notngNotzr);
+    And (a=notngNotzr, b=instruction[0], out=pos);
+
+    Or  (a=neg, b=zero, out=negzero);
+    Or  (a=negzero, b=pos, out=loadPCtemp);
+
+    And (a=loadPCtemp, b=instruction[15], out=loadPC);             // A-instruc: loadPC AND 0 = 0,  C-instruc: loadPC AND 1 = 1
+
+    // Program Counter
+    PC (in=registerA, inc=true, load=loadPC, reset=reset, out[0..14]=pc);
+
+}
